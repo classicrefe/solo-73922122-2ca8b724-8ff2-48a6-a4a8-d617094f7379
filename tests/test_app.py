@@ -128,9 +128,12 @@ class StorageAndAnalysisTests(unittest.TestCase):
 
     def test_add_and_remove_household(self):
         apply_correction(self.conn, "NEW1", "add", 9)
-        self.assertEqual(get_household(self.conn, "NEW1"),
-                         {"household_id": "NEW1",
-                          "original_score": None, "corrected_score": 9})
+        lookup = get_household(self.conn, "NEW1")
+        self.assertEqual(lookup["household_id"], "NEW1")
+        self.assertEqual(lookup["original_score"], None)
+        self.assertEqual(lookup["corrected_score"], 9)
+        self.assertIsNone(lookup["paired_orig_id"])
+        self.assertEqual(lookup["weight_mode"], "independent")
         n = int(self.conn.execute(
             f"SELECT value FROM meta WHERE key='{META_CORR_N}'").fetchone()["value"])
         self.assertEqual(n, 31)

@@ -86,15 +86,61 @@
       </div>
     </form>
     {% if lookup %}
-    <table style="max-width:560px; margin-top:8px;">
-      <tr><th>住户号</th><th>原表评分</th><th>更正表评分</th></tr>
+    <table style="max-width:720px; margin-top:8px;">
+      <tr><th>住户号</th><th>原表评分</th><th>更正表评分</th><th>配对的原表号</th></tr>
       <tr>
         <td>{{ lookup.household_id }}</td>
         <td class="num">{{ lookup.original_score if lookup.original_score is not none else '—（原表无此户）' }}</td>
         <td class="num">{{ lookup.corrected_score if lookup.corrected_score is not none else '—（已移除）' }}</td>
+        <td>
+          {% if lookup.corrected_score is none %}—
+          {% elif lookup.paired_orig_id is not none %}
+            配对原表号 <code>{{ lookup.paired_orig_id }}</code>
+            （原表评分 {{ lookup.paired_original_score }}）
+          {% else %}未配对（使用固定独立权重）{% endif %}
+        </td>
       </tr>
     </table>
     {% endif %}
+
+    <hr style="border:0; border-top:1px solid var(--line); margin:18px 0;">
+
+    <h3 style="margin:0 0 8px; font-size:15px;">改配：核实原表号 ↔ 更正表号</h3>
+    <p class="muted">每行填一组「原表号 → 更正表号」，可一次提交多组，也可在同单内对调。
+      两表的原编号与评分都会保留。若某更正户因本单失去原配对、又没有获得新配对，则自动解配。
+      原表号查不到、或同一侧编号重复，则整单退回且不做任何改动。更正户沿用配对原表户的各轮权重；
+      解配后即使编号相同也改用固定独立权重。</p>
+    <form method="post" action="{{ url_for('pair') }}">
+      <table style="max-width:760px; margin-bottom:10px;">
+        <tr><th style="width:45%">原表号（核实后）</th><th style="width:45%">更正表号</th><th>说明</th></tr>
+        <tbody id="pair-rows">
+        {% for i in range(3) %}
+        <tr>
+          <td><input type="text" name="original_id" placeholder="原表号" style="width:100%;"></td>
+          <td><input type="text" name="corrected_id" placeholder="更正表号" style="width:100%;"></td>
+          <td class="muted">{% if i == 0 %}可留空；空行忽略{% endif %}</td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table>
+      <button type="button" class="secondary" onclick="addPairRow()">＋ 添加一组</button>
+      <button type="submit" style="margin-left:8px;">提交改配（整单生效或整单退回）</button>
+    </form>
+    <script>
+      function addPairRow() {
+        const body = document.getElementById('pair-rows');
+        const row = body.rows[0].cloneNode(true);
+        row.querySelectorAll('input').forEach(i => i.value = '');
+        body.appendChild(row);
+      }
+    </script>
+    <form method="post" action="{{ url_for('unpair') }}" style="margin-top:12px;">
+      <div class="row">
+        <input type="text" name="household_id" placeholder="更正表号（解配）">
+        <button type="submit" class="secondary">解配该更正户</button>
+      </div>
+    </form>
+
     <form method="post" action="{{ url_for('reset') }}" style="margin-top:14px;">
       <button type="submit" class="danger">重置更正表为原表</button>
     </form>

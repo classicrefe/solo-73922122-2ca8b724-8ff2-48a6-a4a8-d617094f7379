@@ -62,3 +62,26 @@ def household_weights(household_id: str, rounds: int = ROUNDS) -> list[int]:
         weight, _ = _poisson_one(state)
         weights.append(weight)
     return weights
+
+
+def independent_household_weights(household_id: str,
+                                  rounds: int = ROUNDS) -> list[int]:
+    """Weights for an unpaired corrected household.
+
+    The seed carries an extra namespace component so that an unpaired
+    corrected household never reuses an original household's weight stream,
+    even when both happen to have the same household id.  The stream is still
+    a fixed function of the corrected id (no dependence on row order or on any
+    pairing), which is what "fixed independent weights" means here.
+    """
+    weights: list[int] = []
+    for round_index in range(rounds):
+        digest = hashlib.blake2b(
+            f"{MASTER_SEED}|independent|{round_index}|{household_id}".encode(
+                "utf-8"
+            ),
+            digest_size=8,
+        ).digest()
+        weight, _ = _poisson_one(int.from_bytes(digest, "little"))
+        weights.append(weight)
+    return weights

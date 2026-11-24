@@ -8,8 +8,38 @@ from datetime import datetime, timezone
 from flask import Flask, flash, redirect, render_template, request, url_for
 
 from .csv_io import CSVValidationError, parse_scores
-from .db import apply_correction, connect, get_household, has_dataset, init_db, replace_original, reset_corrected
+from .db import (
+    apply_correction,
+    apply_pairings,
+    connect,
+    get_household,
+    has_dataset,
+    init_db,
+    replace_original,
+    reset_corrected,
+    unpair_corrected,
+)
 from .stats import analyze
+
+
+def _pair_values(form) -> list[tuple[str, str]]:
+    """Read ``(原表号, 更正表号)`` rows from the pairing form.
+
+    Fully blank rows are ignored (the form ships a few spare rows); a row
+    with only one side filled is kept so the data layer rejects the whole
+    submission.
+    """
+    origs = form.getlist("original_id")
+    corrs = form.getlist("corrected_id")
+    if len(origs) != len(corrs):
+        raise ValueError("配对表单不完整，整单已退回")
+    pairs: list[tuple[str, str]] = []
+    for orig, corr in zip(origs, corrs):
+        orig, corr = orig.strip(), corr.strip()
+        if not orig and not corr:
+            continue
+        pairs.append((orig, corr))
+    return pairs
 
 
 def create_app(db_path: str | None = None) -> Flask:
@@ -108,6 +138,71 @@ def create_app(db_path: str | None = None) -> Flask:
 
         verb = {"add": "补录", "update": "改分", "remove": "移除"}.get(action, action)
         flash(f"已对住户 {household_id} 执行「{verb}」，更正表与汇总已一同生效。", "ok")
+        return redirect(url_for("index"))
+
+    @app.route("/pair", methods=["POST"])
+    def pair():
+        try:
+            pairs = _pair_values(request.form)
+        except ValueError as exc:
+            flash(f"改配被整单退回，已保留原结果：{exc}", "error")
+            return redirect(url_for("index"))
+        if not pairs:
+            flash("请至少填写一组合法的原表号与更正表号。", "error")
+            return redirect(url_for("index"))
+        conn = get_conn()
+        try:
+            if not has_dataset(conn):
+                flash("尚未上传原表，无法改配。", "error")
+                return redirect(url_for("index"))
+            summary = apply_pairings(conn, pairs)
+        except ValueError as exc:
+            conn.rollback()
+            flash(f"改配被整单退回，已保留原结果：{exc}", "error")
+            return redirect(url_for("index"))
+        except Exception as exc:  # pragma: no cover - defensive rollback path
+            conn.rollback()
+            flash(f"改配失败，已保留原结果：{exc}", "error")
+            return redirect(url_for("index"))
+        finally:
+            conn.close()
+        flash(
+            f"改配已生效：提交 {summary['paired']} 组配对，"
+            f"重算 {summary['affected']} 户明细（其中 {summary['unpaired']} 户"
+            "因失去伙伴且未获新配对而解配），更正表与汇总同事务提交。",
+            "ok",
+        )
+        return redirect(url_for("index"))
+
+    @app.route("/unpair", methods=["POST"])
+    def unpair():
+        corrected_id = request.form.get("household_id", "").strip()
+        if not corrected_id:
+            flash("请填写要解配的更正表号。", "error")
+            return redirect(url_for("index"))
+        conn = get_conn()
+        try:
+            if not has_dataset(conn):
+                flash("尚未上传原表，无法解配。", "error")
+                return redirect(url_for("index"))
+            changed = unpair_corrected(conn, corrected_id)
+        except ValueError as exc:
+            conn.rollback()
+            flash(f"解配失败，已保留原结果：{exc}", "error")
+            return redirect(url_for("index"))
+        except Exception as exc:  # pragma: no cover - defensive rollback path
+            conn.rollback()
+            flash(f"解配失败，已保留原结果：{exc}", "error")
+            return redirect(url_for("index"))
+        finally:
+            conn.close()
+        if changed:
+            flash(
+                f"更正户 {corrected_id} 已解配，改用固定独立权重，汇总已同步。",
+                "ok",
+            )
+        else:
+            flash(f"更正户 {corrected_id} 原本就未配对，无变化。", "warn")
         return redirect(url_for("index"))
 
     @app.route("/reset", methods=["POST"])
